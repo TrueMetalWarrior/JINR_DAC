@@ -33,7 +33,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define LCD_ADDR (0x27 << 1)
+#define LCD_ADDR (0x27 << 1)//Определение адреса LCD-дисплея
 
 #define PIN_RS    (1 << 0)
 #define PIN_EN    (1 << 2)
@@ -48,8 +48,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-ADC_HandleTypeDef hadc;
-
 DAC_HandleTypeDef hdac;
 
 I2C_HandleTypeDef hi2c2;
@@ -82,12 +80,11 @@ HAL_StatusTypeDef LCD_SendInternal(uint8_t lcd_addr, uint8_t data, uint8_t flags
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_ADC_Init(void);
 static void MX_TS_Init(void);
 static void MX_DAC_Init(void);
 static void MX_I2C2_Init(void);
 /* USER CODE BEGIN PFP */
-int f=1,j=1;
+int f=1,j=1;//Глобальные переменные, f-флаг для вывода значения шага напряжения на дисплей, j - значение шага напряжения
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -123,40 +120,44 @@ void LCD_SendString(uint8_t lcd_addr, char *str)
     }
 }
 
-void Send(char Vdac[])
+void Send()//Функция вывода данных на дисплей
 {
-	LCD_Init(LCD_ADDR);
-	LCD_SendCommand(LCD_ADDR, 0b10000000);
-	LCD_SendString(LCD_ADDR, " OUTPUT VOLTAGE");
-	LCD_SendCommand(LCD_ADDR, 0b11000000);
-	LCD_SendString(LCD_ADDR, Vdac);
+	float Vdac;//Переменная, отвечающая за получение данных с ЦАП, в которой хранится численное значение с ЦАП
+	char Vlcd[]=" Voltage:0000mV";//Массив для вывода значения напряжения на дисплей
+	Vdac=HAL_DAC_GetValue(&hdac,DAC_CHANNEL_2);//Функция получения значения с ЦАП
+	Vdac=4095-Vdac;//Из-за инвертированной работы ЦАП из 4095 вычитаем полученное значение с ЦАП для рассчета нужного напряжения
+	Vdac=Vdac*1000/896+5;//Рассчет текущего напряжения на выходе с ЦАП, где 1000 - перевод в мВ, 896 - коэффициент преобразования из пропорции, 5 - смещение выводимого на дисплей значения т.к. минимальное значение на выводе ЦАП 5 мВ
+	Vlcd[9]=((int)Vdac/1000);//Преобразование численных значений в символы ascii
+	Vlcd[10]=(int)Vdac/100-Vlcd[9]*10;//Преобразование численных значений в символы ascii
+	Vlcd[11]=(int)Vdac/10-Vlcd[9]*100-Vlcd[10]*10;//Преобразование численных значений в символы ascii
+	Vlcd[12]=(int)Vdac-Vlcd[9]*1000-Vlcd[10]*100-Vlcd[11]*10;//Преобразование численных значений в символы ascii
+	Vlcd[9]=Vlcd[9]+48;//Преобразование численных значений в символы ascii
+	Vlcd[10]=Vlcd[10]+48;//Преобразование численных значений в символы ascii
+	Vlcd[11]=Vlcd[11]+48;//Преобразование численных значений в символы ascii
+	Vlcd[12]=Vlcd[12]+48;//Преобразование численных значений в символы ascii
+    LCD_Init(LCD_ADDR);//Инициализация lcd
+    // set address to 0x00
+    LCD_SendCommand(LCD_ADDR, 0b10000000);//Отправка данных в 1ую строку
+    LCD_SendString(LCD_ADDR, Vlcd);//В 1ой строке - текущее значение напряжения на выводе ЦАП
+    if(f==1)//Условие для проверки значения шага для вывода на дисплей
+    {
+    	LCD_SendCommand(LCD_ADDR, 0b11000000);//Функция отправки данных во 2ую строку
+    	LCD_SendString(LCD_ADDR, "    Step:1mV");
+    }
+    if(f==2)//Аналогично предыдущему условию
+    {
+    // set address to 0x40
+    LCD_SendCommand(LCD_ADDR, 0b11000000);
+    LCD_SendString(LCD_ADDR, "   Step:10mV");
+    }
+    if(f==3)//Аналогично предыдущему условию
+    {
+        // set address to 0x40
+        LCD_SendCommand(LCD_ADDR, 0b11000000);
+        LCD_SendString(LCD_ADDR, "   Step:100mV");
+    }
 }
 
-//KB
-char KBTable[]="000A096308520741";
-
-void ScanKB(char*kb)
-{
-	unsigned int row,col,colnum,rownum,flag=0;
-
-	for(colnum=0; colnum<4; colnum++)
-	{
-		col=colnum+6;
-		GPIOC->ODR &= ~(1 << col);
-		for(rownum=0; rownum<4; rownum++)
-		{
-			row=rownum+8;
-			HAL_Delay(20);
-			if((GPIOA->IDR & (1<<row))==0)
-			{
-				*kb = (KBTable[(colnum<<2)+rownum]);
-				flag=1;
-			}
-		}
-		GPIOC->ODR |= 1 << col;
-	}
-	if(flag==0)*kb='e';
-}
 
 /* USER CODE END 0 */
 
@@ -167,9 +168,10 @@ void ScanKB(char*kb)
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-	char sc,fl=0;
-	char Vkb[]=" 000 mV";
-	int in;
+	float V,i;
+	int Vd=0;//Значение напряжения на выходе ЦАП
+	i=0.896;//коэффициент преобразования напряжения из пропорции i=4095/5, где 4095 - разрядность ЦАП, 5 - максимально выдаваемое напряжение, В
+	V=4095;//Переменная отвечающая за текущее значение напряжения на выводе ЦАП
 	//LCD_Init(LCD_ADDR);
   /* USER CODE END 1 */
   
@@ -192,63 +194,101 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_ADC_Init();
   MX_TS_Init();
   MX_DAC_Init();
   MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
-  //1365*Vdac!!!! Необходимое значение на выходе ЦАП нужно умножить 1365!!!
-  HAL_DAC_Start(&hdac,DAC_CHANNEL_1);
+  HAL_DAC_Start(&hdac,DAC_CHANNEL_2);//Инициализация 2ого канала ЦАП
 
-  HAL_DAC_SetValue(&hdac,DAC_CHANNEL_1,DAC_ALIGN_12B_R,0);
-
-  HAL_GPIO_WritePin(GPIOB, LD4_Pin,1);
+  HAL_DAC_SetValue(&hdac,DAC_CHANNEL_2,DAC_ALIGN_12B_R,4095);//Установка значения ЦАП в 5мВ
+// !!!При переходе на новую плату возможно инвертирование значений, задаваемых в ЦАП, т.е. 0 будет соответствовать 0!!!
+  HAL_GPIO_WritePin(GPIOB, LD4_Pin,1);//Зажигание светодиода для определения прошился ли микроконтроллер
   HAL_Delay(200);
   HAL_GPIO_WritePin(GPIOB, LD4_Pin,0);
-  //Send();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  //Сброс напряжения в 0, шаг, изменение шага
-  HAL_GPIO_WritePin(GPIOB, LD3_Pin,1);
-  Send(Vkb);
-
   while (1)
   {
-	  ScanKB(&sc);
-	  if(sc=='A')
+	  if((GPIOC->IDR & (1<<0))==0)//Условие для замыкания пина PC0, который обнуляет напряжение на выводе ЦАП
 	  {
-		  in=3;
-		  sc=0;
-		  while(sc!='A')
+		  HAL_Delay(500);//Защита от дребезга клавиш
+		  if((GPIOC->IDR & (1<<0))==0)
 		  {
-			ScanKB(&sc);
-			if(sc!='A'&&sc!='e')
-			{
-				Vkb[in]=sc;
-				sc=0;
-				if(in==2)
-				{
-					fl=Vkb[in];
-					Vkb[in]=Vkb[in+1];
-					Vkb[in+1]=fl;
-				}
-				if(in==1)
-				{
-					Vkb[in+2]=Vkb[in];
-					Vkb[in]=Vkb[in+1];
-					Vkb[in+1]=fl;
-				}
-				in--;
-			}
-			Send(Vkb);
-			if(in==0)in=3;
+			  Vd=0;
+			  HAL_DAC_SetValue(&hdac,DAC_CHANNEL_2,DAC_ALIGN_12B_R,4095);
+			  HAL_GPIO_WritePin(GPIOB, LD4_Pin,1);
+			  HAL_Delay(250);
+			  HAL_GPIO_WritePin(GPIOB, LD4_Pin,0);
 		  }
-
-
 	  }
-
+	  if((GPIOC->IDR & (1<<1))==0)//Условие для замыкания пина PC1, который изменяет шаг изменения напряжения на выводе ЦАП
+	  	  {
+	  		  HAL_Delay(500);
+	  		  f++;//Инкриментация флага
+	  		  if(f>3)//Условие для цикличности изменения шага
+	  		  {
+	  			  f=1;
+	  		  }
+	  		  switch(f)//Конструкция switch для выбора текущего значения f и, соответственно, выбора шага
+	  		  {
+	  		  	  case 1://Шаг 1мВ
+	  		  	  {
+	  		  		  j=1;
+	  		  		  HAL_GPIO_WritePin(GPIOB, LD4_Pin,1);
+	  		  		  HAL_Delay(200);
+	  		  		  HAL_GPIO_WritePin(GPIOB, LD4_Pin,0);
+	  		  		  break;
+	  		  	  }
+	  		  	  case 2://Шаг 10мВ
+	  		  	  {
+	  		  		  j=10;
+	  		  		  HAL_GPIO_WritePin(GPIOB, LD4_Pin,1);
+	  		  		  HAL_Delay(200);
+	  		  		  HAL_GPIO_WritePin(GPIOB, LD4_Pin,0);
+	  		  		  break;
+	  		  	  }
+	  		  	  case 3://Шаг 100мВ
+	  		  	  {
+	  		  		  j=100;
+	  		  		  HAL_GPIO_WritePin(GPIOB, LD4_Pin,1);
+	  		  		  HAL_Delay(200);
+	  		  		  HAL_GPIO_WritePin(GPIOB, LD4_Pin,0);
+	  		  		  break;
+	  		  	  }
+	  		  }
+	  	  }
+	  if((GPIOC->IDR & (1<<2))==0)//Увеличение напряжения на выводе ЦАП
+	  {
+		  Vd=Vd+j;//Vd - буффер для запоминания значения напряжения, прибавляя к нему величину j, которая зависит от выбранного шага, управляем выдаваемым напряжениием
+		  if(Vd>250)//Ограничение по максимуму - 250мВ
+		  {
+			  Vd=0;
+		  }
+		  V=4095-i*Vd;//Преобразование значения напряжения в значение для ЦАП(без инвертирования просто i*Vd)
+		  HAL_Delay(200);
+		  HAL_DAC_SetValue(&hdac,DAC_CHANNEL_2,DAC_ALIGN_12B_R,V);//Установка полученного напряжения
+		  HAL_GPIO_WritePin(GPIOB, LD3_Pin,1);
+		  HAL_Delay(200);
+		  HAL_GPIO_WritePin(GPIOB, LD3_Pin,0);
+	  }
+	  if((GPIOC->IDR & (1<<3))==0)//Уменьшение напряжения на выводе ЦАП
+	  {
+		  Vd=Vd-j;//Аналогично предыдущему условию, но с поправкой на уменьшение значения
+		  if(Vd<0)//Ограничение по минимуму
+		  {
+			  Vd=0;
+		  }
+		  V=4095-i*Vd;//Преобразование значения напряжения в значение для ЦАП(без инвертирования просто i*Vd)
+		  HAL_Delay(200);
+		  HAL_DAC_SetValue(&hdac,DAC_CHANNEL_2,DAC_ALIGN_12B_R,V);
+		  HAL_GPIO_WritePin(GPIOB, LD3_Pin,1);
+		  HAL_Delay(200);
+		  HAL_GPIO_WritePin(GPIOB, LD3_Pin,0);
+	  }
+	  HAL_Delay(200);
+	  Send();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -297,59 +337,6 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief ADC Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_ADC_Init(void)
-{
-
-  /* USER CODE BEGIN ADC_Init 0 */
-
-  /* USER CODE END ADC_Init 0 */
-
-  ADC_ChannelConfTypeDef sConfig = {0};
-
-  /* USER CODE BEGIN ADC_Init 1 */
-
-  /* USER CODE END ADC_Init 1 */
-  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion) 
-  */
-  hadc.Instance = ADC1;
-  hadc.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
-  hadc.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc.Init.ScanConvMode = ADC_SCAN_DISABLE;
-  hadc.Init.EOCSelection = ADC_EOC_SEQ_CONV;
-  hadc.Init.LowPowerAutoWait = ADC_AUTOWAIT_DISABLE;
-  hadc.Init.LowPowerAutoPowerOff = ADC_AUTOPOWEROFF_DISABLE;
-  hadc.Init.ChannelsBank = ADC_CHANNELS_BANK_A;
-  hadc.Init.ContinuousConvMode = DISABLE;
-  hadc.Init.NbrOfConversion = 1;
-  hadc.Init.DiscontinuousConvMode = DISABLE;
-  hadc.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T2_CC3;
-  hadc.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
-  hadc.Init.DMAContinuousRequests = DISABLE;
-  if (HAL_ADC_Init(&hadc) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time. 
-  */
-  sConfig.Channel = ADC_CHANNEL_4;
-  sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_4CYCLES;
-  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN ADC_Init 2 */
-
-  /* USER CODE END ADC_Init 2 */
-
-}
-
-/**
   * @brief DAC Initialization Function
   * @param None
   * @retval None
@@ -373,11 +360,11 @@ static void MX_DAC_Init(void)
   {
     Error_Handler();
   }
-  /** DAC channel OUT1 config 
+  /** DAC channel OUT2 config 
   */
   sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
-  if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -457,8 +444,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, IDD_CNT_EN_Pin|GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8 
-                          |GPIO_PIN_9, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(IDD_CNT_EN_GPIO_Port, IDD_CNT_EN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, LD4_Pin|LD3_Pin, GPIO_PIN_RESET);
@@ -479,42 +465,35 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SEG0_Pin SEG1_Pin SEG2_Pin */
-  GPIO_InitStruct.Pin = SEG0_Pin|SEG1_Pin|SEG2_Pin;
+  /*Configure GPIO pins : SEG0_Pin SEG1_Pin SEG2_Pin COM0_Pin 
+                           COM1_Pin COM2_Pin SEG12_Pin */
+  GPIO_InitStruct.Pin = SEG0_Pin|SEG1_Pin|SEG2_Pin|COM0_Pin 
+                          |COM1_Pin|COM2_Pin|SEG12_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Alternate = GPIO_AF11_LCD;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SEG8_Pin SEG9_Pin SEG10_Pin SEG3_Pin 
-                           SEG4_Pin SEG5_Pin SEG13_Pin COM3_Pin */
-  GPIO_InitStruct.Pin = SEG8_Pin|SEG9_Pin|SEG10_Pin|SEG3_Pin 
-                          |SEG4_Pin|SEG5_Pin|SEG13_Pin|COM3_Pin;
+  /*Configure GPIO pins : SEG8_Pin SEG9_Pin SEG10_Pin SEG11_Pin 
+                           SEG3_Pin SEG4_Pin SEG5_Pin SEG13_Pin 
+                           COM3_Pin */
+  GPIO_InitStruct.Pin = SEG8_Pin|SEG9_Pin|SEG10_Pin|SEG11_Pin 
+                          |SEG3_Pin|SEG4_Pin|SEG5_Pin|SEG13_Pin 
+                          |COM3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Alternate = GPIO_AF11_LCD;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PC6 PC7 PC8 PC9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PA8 PA9 PA10 PA11 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_11;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : SEG22_Pin SEG23_Pin */
-  GPIO_InitStruct.Pin = SEG22_Pin|SEG23_Pin;
+  /*Configure GPIO pins : SEG18_Pin SEG19_Pin SEG20_Pin SEG21_Pin 
+                           SEG22_Pin SEG23_Pin */
+  GPIO_InitStruct.Pin = SEG18_Pin|SEG19_Pin|SEG20_Pin|SEG21_Pin 
+                          |SEG22_Pin|SEG23_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
